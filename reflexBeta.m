@@ -62,6 +62,7 @@ clear vid capTime tEnd fStart counter frameTimeSeries frskip frameMedian tInd
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%% VIDEO READER AND IMAGE LOADER BLOCK END %%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% try
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%% IMAGE REGISTRATION BLOCK START  %%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -82,14 +83,14 @@ FMCWindow       = hanning(NoOfWedges)*hanning(size(refImg,2))';             % FM
 dispX = zeros([videoDims(4),1]);                                            % Preallocate horizontal (x-axis) displacement
 dispY = zeros([videoDims(4),1]);                                            % Preallocate vertical (y-axis) displacement
 dispS = zeros([videoDims(4),1]);                                            % Preallocate scaling displacement
-refF  = griddedInterpolant(xSub',ySub',refImg','linear','none');            % Build reference frame interp Function
+refF  = griddedInterpolant(xSub',ySub',refImg','spline','linear');            % Build reference frame interp Function
 %%%%%%%%%%%%%%%%%%%%%%%%%%% Registration Process %%%%%%%%%%%%%%%%%%%%%%%%%%
 for k = 1:videoDims(end)
     curF    = griddedInterpolant(xSub',ySub',...
-        double(imresize(video(:,:,1,k),1/rescaleFactor))','linear','none'); % Build reference frame interp Function
+        double(imresize(video(:,:,1,k),1/rescaleFactor))','spline','linear'); % Build reference frame interp Function
     [dispX(k),dispY(k),dispS(k),~] = statisticalRegister(refF,curF,...
         SpatialWindow,FMCWindow,size(refImg,1),size(refImg,2),...
-        MinRad,MaxRad,xSub,ySub,XLP,YLP,1E-1/(rescaleFactor^2),50);         % Run registration
+        MinRad,MaxRad,xSub,ySub,XLP,YLP,1E-2/(rescaleFactor^2),50);         % Run registration
 end
 %%%%%%%%%%%%%%%%%%%%%%%%%% Run Outlier Detection %%%%%%%%%%%%%%%%%%%%%%%%%%
 scaleThresh = -log(0.5)/log(MaxRad/MinRad)*(size(refImg,2));                % Scale threshold
@@ -154,6 +155,7 @@ clear ref cur roi eyeDetector curF tempEye k n ROI rescaleFactor indROI Tf
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%% HAAR EYE DETECTOR BLOCK END %%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%% PUPIL DILATION START %%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -181,9 +183,9 @@ for k = 2:(videoDims(4)-1)                                                  % Re
     T1      = [ scale(k-1) 0 dispX(k-1); 0 scale(k-1) dispY(k-1); 0 0 1];   % Set reference transform matrix
     T2      = [ scale(k+1) 0 dispX(k+1); 0 scale(k+1) dispY(k+1); 0 0 1];   % Set reference transform matrix
     refF    = griddedInterpolant(XCart',YCart',...
-        double(reference(:,:,3))','linear','none');
+        double(reference(:,:,3))','spline','linear');
     curF    = griddedInterpolant(XCart',YCart',...
-        double(current(:,:,3))','linear','none');
+        double(current(:,:,3))','spline','linear');
     refIM   = tformImage(XCart,YCart,T1,...
         [videoDims(1) videoDims(2)],refF)*255;                              % Register reference
     curIM   = tformImage(XCart,YCart,T2,...
@@ -193,13 +195,14 @@ for k = 2:(videoDims(4)-1)                                                  % Re
         refIM(yCart(:,1)+ycent,xCart(1,:)+xcent,:))))));                    % Reference subregion
     curIM   = double(imcomplement(medfilt2(histeq(uint8(...
         curIM(yCart(:,1)+ycent,xCart(1,:)+xcent,:))))));                    % Current subregion
+%     figure(12); imagesc(imfuse(curIM,refIM)); pause(1E-2);
     %%%%% Peform correlation process
-    fr01F = griddedInterpolant(xCart',yCart',refIM','linear','linear');
-    fr02F = griddedInterpolant(xCart',yCart',curIM','linear','linear');
+    fr01F = griddedInterpolant(xCart',yCart',refIM','spline','linear');
+    fr02F = griddedInterpolant(xCart',yCart',curIM','spline','linear');
     try
         [dispS(k),dispx(k),dispy(k)] =  dilationEstimator(fr01F,fr02F,...
             xCart,yCart,xLP,yLP,dilateSpatialWindow,dilateFMCWindow,...
-            dilateMinRad,dilateMaxRad,winsize,1E-2,100);
+            dilateMinRad,dilateMaxRad,winsize,1E-3,100);
         dispS(k)    = dispS(k)/(2*tStep(k));                                % Scale Displacement based on Frame Step
     catch
         dispS(k) = nan;
@@ -208,12 +211,13 @@ end
 clear xLP yLP dilateFMCWindow dilateSpatialWindow dilateNoOfWedges
 clear current reference T1 T2 refF curF refIM curIM fr01F fr02F
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
 scaleThresh     = -log(0.8)/log(dilateMaxRad/dilateMinRad)*(winsize);       % Threshold for displacment
 dispSVal        = velThresh(dispS,scaleThresh);                             % Perform Velocity Thresholding
 dispSVal        = velReplace(dispSVal');                                    % Perform Velocity Replacement
 dispSVal        = filloutliers(dispSVal,'pchip','movmedian',3);             % Perform outlier detection
 dilationRatio   = (dilateMaxRad/dilateMinRad).^...
-    ((cumsum(-dispSVal.*tStep(1:end-1),2)*2)/(winsize));                    % Compute Dilation
+    ((cumsum(-dispSVal(:).*tStep(1:end-1)',1)*2)/(winsize));                    % Compute Dilation
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%% PUPIL DILATION END %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -223,7 +227,7 @@ dilationRatio   = (dilateMaxRad/dilateMinRad).^...
 refImg      = rgb2hsv(video(yCart(:,1)+round(ycent),...
     xCart(1,:)+round(xcent),:,1));                                          % Crop to only the eye
 refImg      = histeq(refImg(:,:,3));                                        % Equalize in RGB space
-pupilProps  = regionprops(im2bw(imcomplement(uint8(255*refImg)),0.1),...
+pupilProps  = regionprops(imbinarize(imcomplement(uint8(255*refImg)),0.1),...
     'EquivDiameter','MajorAxisLength','MinorAxisLength');                   % Use regionprops to estimate pupil diameter
 for k = 1:numel(pupilProps)
     if k == 1
@@ -232,10 +236,9 @@ for k = 1:numel(pupilProps)
         pupilDiam = max(pupilDiam,pupilProps(k).EquivDiameter);             % Store maximum value to pupil diameter
     end
 end
-pixeltomm       = (2*median(storeEye(:,end)))/24;                           % Use Biometrics to get physical units of dilation   
+pixeltomm       = (2*nanmedian(storeEye(:,end)))/24;                        % Use Biometrics to get physical units of dilation   
 approxPupilDia  = (pupilDiam/2)/pixeltomm;                                  % Physical approximate pupil diameter
 dilation        = dilationRatio * approxPupilDia;                           % Dimensionalize for physical dilation
-
 fid = fopen(fullfile(pathName,...
     [fileBase,'_timeseries_measurements.txt']),'w');                        % Open Text File
 fprintf(fid, [ 'Time(s)' ' ' 'Dilation Ratio' ' ' ' Pupil Diameter ' ' '...
@@ -244,10 +247,12 @@ fprintf(fid, '%f %f %f %f %f \n', [tVect' dilationRatio(:)...
     dilation(:) dispS(:)  dispSVal(:)]');                                   % Print Results
 fclose(fid);                                                                % Close Text File
 
-onsetInd            = find(tstamp == 1);                                    
-onsetTime           = tVect(onsetInd(1) + 2);
 constrictInd        = find(dilationRatio == min(dilationRatio(:)));
 maxConstrictTime    = tVect(constrictInd);
+[pks,locs]          = findpeaks(abs(socdiff(dispSVal(1:constrictInd),1,2)));
+quant50ind          = find(pks >= median(pks));
+onsetInd            = locs(quant50ind(1));                                    
+onsetTime           = tVect(onsetInd);
 recoveryInd         = find(dilationRatio(constrictInd:end) >=...
     0.75*abs(1-dilationRatio(constrictInd))+dilationRatio(constrictInd));
 if isempty(recoveryInd)
@@ -256,20 +261,8 @@ if isempty(recoveryInd)
 else
     recoveryTime    = tVect(constrictInd+recoveryInd(1));
 end
-
-tempInd     = find(tstamp == 1);
-recovInd    = constrictInd+recoveryInd(1);
-try
-    averageConstriction = polyfit(tVect(tempInd(1)-2:constrictInd),...
-        dilation(tempInd(1)-2:constrictInd),1);
-    averageDilation     = polyfit(tVect(constrictInd:recovInd(1)),...
-        dilation(constrictInd:recovInd(1)),1);
-catch
-    averageConstriction = polyfit(tVect(tempInd(1):constrictInd),...
-        dilation(tempInd(1):constrictInd),1);
-    averageDilation     = polyfit(tVect(constrictInd:recovInd(1)-1),...
-        dilation(constrictInd:recovInd(1)-1),1);
-end
+averageConstriction = trapz(dispSVal(onsetInd:constrictInd))/(constrictInd-onsetInd);
+averageDilation     = trapz(dispSVal(constrictInd:recoveryInd(1)))/(constrictInd-recoveryInd(1));
 fid = fopen(fullfile(pathName,...
     [fileBase,'_timeseries_parameters.txt']),'w');                          % Open Text File
 fprintf(fid, [ 'Onset Time,s' ' ' 'Peak Time,s' ' '...
@@ -281,7 +274,27 @@ fprintf(fid,['%03.3f        %03.3f       %03.3f      %03.3f ',...
     averageConstriction(1) averageDilation(1)]');                           % Print Results
 fclose(fid);                                                                % Close Text File
 toc
+
+figure(1); 
+subplot(2,1,1)
+plot(tVect,dispSVal,'LineWidth',2);
+grid on;
+axis([0 5 -3 3]);
+set(gca,'LineWidth',2,'FontSize',18,'FontWeight','bold');
+xlabel('Time, seconds','FontSize',18,'FontWeight','bold');
+ylabel('Dilatation Velocity, ppf','FontSize',18,'FontWeight','bold');
+subplot(2,1,2)
+plot(tVect,dilationRatio*100,'LineWidth',2);
+axis([0 5 20 150]);
+grid on;
+set(gca,'LineWidth',2,'FontSize',18,'FontWeight','bold');
+xlabel('Time, seconds','FontSize',18,'FontWeight','bold');
+ylabel('Dilatation, percent','FontSize',18,'FontWeight','bold');
+set(gcf,'Position',[100 100 400 550],'Color',[1 1 1]);
+export_fig(gcf,fullfile(pathName,[fileBase,'_curves.png']),'-a1','-r100');
+%%
 keyboard
+%%
 % catch
 %     fid = fopen(fullfile(pathName,[fileBase,'_results.txt']),'w');  % Open Text File
 %     fclose(fid);    % Close Text File
@@ -310,8 +323,8 @@ while err >= err_thresh && iteration <= iteration_thresh
     FFT01   = fft2(SpatialWindow.*(fr01-mean(fr01(:))));
     FFT02   = fft2(SpatialWindow.*(fr02-mean(fr02(:))));
     % Run Fourier-Mellin Transform on FFTs
-    FMT01   = interp2(fftshift(abs(FFT01)),xLP,yLP,'linear',0);
-    FMT02   = interp2(fftshift(abs(FFT02)),xLP,yLP,'linear',0);
+    FMT01   = interp2(fftshift(abs(FFT01)),xLP,yLP,'spline',0);
+    FMT02   = interp2(fftshift(abs(FFT02)),xLP,yLP,'spline',0);
     % Calculate FFTs of FMTs
     FMC01   = fft2(FMCWindow.*(FMT01-mean(FMT01(:))));
     FMC02   = fft2(FMCWindow.*(FMT02-mean(FMT02(:))));
@@ -355,8 +368,8 @@ while err >= err_thresh && iteration <= iteration_thresh
     [plX, plY]      = subPixel2D(fftshift(abs(ifft2(dispSpectral))));
     dispX = dispX + plX; dispY = dispY + plY;
     % Perform FMT on FFTs and scaling-based cross-correlation
-    FMI01           = interp2(abs(FFT01),xLP,yLP,'linear',0);
-    FMI02           = interp2(abs(FFT02),xLP,yLP,'linear',0);
+    FMI01           = interp2(abs(FFT01),xLP,yLP,'spline',0);
+    FMI02           = interp2(abs(FFT02),xLP,yLP,'spline',0);
     fmcSpectral     = fft2(FMCWindow.*(FMI01-mean(FMI01(:)))).*...
         conj(fft2(FMCWindow.*(FMI02-mean(FMI02(:)))));
     [fmcLocX, ~]    = subPixel2D(fftshift(abs(ifft2(fmcSpectral))));
@@ -469,128 +482,5 @@ for n = 1:numel(x)
         % Perform weighted-median replacement
         x(n) = sum(distvect*x(ind)')/sum(distvect);
     end
-end
-end
-
-function [SPECTRAL_PHASE, SPECTRAL_MAGNITUDE] = split_complex(COMPLEX_CROSS_CORRELATION_PLANE)
-% PHASE_ONLY_CORRELATION_PLANE = phaseOnlyFilter(COMPLEX_CROSS_CORRELATION_PLANE)
-% performs phase-only filtering of a spectral-domain cross correlation signal
-
-% Calculate the spectral magnitude of the complex cross correlation
-% in the frequency domain
-SPECTRAL_MAGNITUDE = abs(COMPLEX_CROSS_CORRELATION_PLANE);
-% Set zeros to ones
-SPECTRAL_MAGNITUDE(SPECTRAL_MAGNITUDE == 0) = 1;
-% Divide cross correlation by its nonzero magnitude to extract the phase information
-SPECTRAL_PHASE = COMPLEX_CROSS_CORRELATION_PLANE ./ SPECTRAL_MAGNITUDE;
-% Replace infinites with the original complex value.
-SPECTRAL_PHASE(isinf(SPECTRAL_PHASE)) = ...
-    COMPLEX_CROSS_CORRELATION_PLANE(isinf(SPECTRAL_PHASE));
-end
-
-function [x] = movingMADUOD(x,iter,wsize,threshold)
-% [x] = movingMADUOD(x,threshold) Performs regional Median Absolute
-% Difference (MAD) Outlier detection
-% Example: dispX = movingMADUOD(dispX,1,9,2);
-for k = 1:iter
-    for n = 1:numel(x)
-        if ~isnan(x(n))
-            % Make sure left index stays in vector space
-            ind1 = max([1 n-(wsize+1)/2]);
-            % Make sure right index stays in vector space
-            ind2 = min([numel(x) n+(wsize+1)/2]);
-            % Pull window (or block in this case) of vector entry values
-            block = x(ind1:ind2);
-            % Remove the "value of interest" from the block
-            irmv = find(block == x(n));
-            X = block(irmv);
-            block(irmv) = [];
-            % Calculate the block median & MAD
-            block = sort(block);
-            M = nanmedian(block);
-            MAD = nanmedian(abs(x-M));
-            % Compute the z-score (statistical score)
-            R = abs(X-M)/MAD;
-            % If score is above threshold, set "value of interest" to NaN
-            if R > threshold
-                x(n) = nan;
-            end
-        end
-    end
-end
-end
-
-function [W] = energyfilt(Nx,Ny,d,q)
-% --- RPC Spectral Filter Subfunction ---
-if numel(d) == 1
-    d(2) = d;
-end
-%assume no aliasing
-if nargin<4
-    q = 0;
-end
-%initialize indices
-[k1,k2]=meshgrid(-pi:2*pi/Ny:pi-2*pi/Ny,-pi:2*pi/Nx:pi-2*pi/Nx);
-%particle-image spectrum
-Ep = (pi*255*(d(1)*d(2))/8)^2*exp(-d(2)^2*k1.^2/16).*exp(-d(1)^2*k2.^2/16);
-%aliased particle-image spectrum
-Ea = (pi*255*(d(1)*d(2))/8)^2*exp(-d(2)^2*(k1+2*pi).^2/16).*exp(-d(1)^2*(k2+2*pi).^2/16)+...
-    (pi*255*(d(1)*d(2))/8)^2*exp(-d(2)^2*(k1-2*pi).^2/16).*exp(-d(1)^2*(k2+2*pi).^2/16)+...
-    (pi*255*(d(1)*d(2))/8)^2*exp(-d(2)^2*(k1+2*pi).^2/16).*exp(-d(1)^2*(k2-2*pi).^2/16)+...
-    (pi*255*(d(1)*d(2))/8)^2*exp(-d(2)^2*(k1-2*pi).^2/16).*exp(-d(1)^2*(k2-2*pi).^2/16)+...
-    (pi*255*(d(1)*d(2))/8)^2*exp(-d(2)^2*(k1+0*pi).^2/16).*exp(-d(1)^2*(k2+2*pi).^2/16)+...
-    (pi*255*(d(1)*d(2))/8)^2*exp(-d(2)^2*(k1+0*pi).^2/16).*exp(-d(1)^2*(k2-2*pi).^2/16)+...
-    (pi*255*(d(1)*d(2))/8)^2*exp(-d(2)^2*(k1+2*pi).^2/16).*exp(-d(1)^2*(k2+0*pi).^2/16)+...
-    (pi*255*(d(1)*d(2))/8)^2*exp(-d(2)^2*(k1-2*pi).^2/16).*exp(-d(1)^2*(k2+0*pi).^2/16);
-%noise spectrum
-En = pi/4*Nx*Ny;
-%DPIV SNR spectral filter
-W  = Ep./((1-q)*En+(q)*Ea);
-W  = W'/max(max(W));
-end
-
-function [Q] = simpsonH(F,h)
-%   [Q] = function SimpsonH(F,h);
-%
-%   Perform numerical integration of function f(x) on x=[a,b] sampled at
-%   k evenly spaced grid points on interval h=(b-a)/(k-1).
-%
-%   If k is odd, normal composite Simpson's rule will be used.
-%   If k is even, Simpson's 3/8's rule will be used to complete the final
-%   interval.
-%
-%   Integration will be performed on the columns of F.
-[M,~] = size(F);
-%could add check to transpose if data is in single row instead of column
-if M <3
-    error('F must have at least 3 points to integrate')
-end
-W = zeros(1,M);
-if M==4             %use only 3/8's rule
-    W = [1 3 3 1];
-    Q = 3/8*h*W*F;
-elseif mod(M,2)     %M is odd - use only Simpson's rule
-    W(1) = 1;
-    for m=2:2:M-1
-        W(m) = 4;
-    end
-    for m=3:2:M-2
-        W(m) = 2;
-    end
-    W(M) = 1;
-    Q = h/3*W*F;
-else                %M is even - need 3/8's rule to finish interval
-    W(1) = 8;
-    for m=2:2:M-4
-        W(m) = 32;
-    end
-    for m=3:2:M-5
-        W(m) = 16;
-    end
-    W(M-3)=17;
-    W(M-2)=27;
-    W(M-1)=27;
-    W(M) = 9;
-    Q = h/24*W*F;
 end
 end
